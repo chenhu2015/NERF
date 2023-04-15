@@ -6,26 +6,26 @@ import json
 import torchvision.transforms as T
 
 
-trans_t = lambda t : torch.as_tensor([
+trans_t = lambda t : torch.Tensor([
     [1,0,0,0],
     [0,1,0,0],
     [0,0,1,t],
     [0,0,0,1],
-], dtype=torch.float32)
+]).to(torch.float32)
 
-rot_phi = lambda phi : torch.as_tensor([
+rot_phi = lambda phi : torch.Tensor([
     [1,0,0,0],
     [0,torch.cos(phi),-torch.sin(phi),0],
     [0,torch.sin(phi), torch.cos(phi),0],
     [0,0,0,1],
-], dtype=torch.float32)
+]).to(torch.float32)
 
-rot_theta = lambda th : torch.as_tensor([
+rot_theta = lambda th : torch.Tensor([
     [torch.cos(th),0,-torch.sin(th),0],
     [0,1,0,0],
     [torch.sin(th),0, torch.cos(th),0],
     [0,0,0,1],
-], dtype=torch.float32)
+]).to(torch.float32)
 
 
 def pose_spherical(theta, phi, radius):

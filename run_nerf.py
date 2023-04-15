@@ -1,8 +1,5 @@
 import os
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
 import sys
-import tensorflow as tf
 import numpy as np
 import imageio
 import json
@@ -10,13 +7,20 @@ import random
 import time
 import torch
 import torch.nn as nn
-from run_nerf_helpers import *
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+from tqdm import tqdm, trange
+from run_nerf_helper import *
 from load_llff import load_llff_data
 from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 
+device = torch.device("cpu")
 
-np.seed(0)
+if torch.cuda.is_available():
+  device = torch.device("cuda")
+
+np.random.seed(0)
 
 def batchify(fn, chunk):
     """Constructs a version of 'fn' that applies to smaller batches."""
@@ -107,8 +111,7 @@ def render_rays(ray_batch,
         """
         # Function for computing density from model prediction. This value is
         # strictly between [0, 1].
-        def raw2alpha(raw, dists, act_fn=tf.nn.relu): return 1.0 - \
-            torch.exp(-act_fn(raw) * dists) 
+        def raw2alpha(raw, dists, act_fn=F.relu): return 1.0 - torch.exp(-act_fn(raw) * dists) 
             #tf.exp(-act_fn(raw) * dists)
             #torch.exp(input, *, out=None)
             
@@ -118,7 +121,7 @@ def render_rays(ray_batch,
 
         # The 'distance' from the last integration time is infinity.
         #dists = tf.concat([dists, tf.broadcast_to([1e10], dists[..., :1].shape)],axis=-1)  # [N_rays, N_samples]
-        dists = torch.concat([dists, tf.broadcast_to([1e10], dists[..., :1].shape)],axis=-1)  # [N_rays, N_samples]
+        dists = torch.concat([dists, torch.Tensor([1e10]).expand(dists[..., :1].shape)],axis=-1)  # [N_rays, N_samples]
 
 
         # Multiply each distance by the norm of its corresponding direction ray
@@ -138,7 +141,7 @@ def render_rays(ray_batch,
         if raw_noise_std > 0.:
             #noise = tf.random.normal(raw[..., 3].shape) * raw_noise_std
             #torch.normal(mean, std, *, generator=None, out=None) 
-            noise = torch.normal(raw[..., 3].shape, raw_noise_std) 
+            noise = torch.normal(raw[..., 3].shape, raw_noise_std) # DIFFERENT
 
         # Predict density of each sample along each ray. Higher values imply
         # higher likelihood of being absorbed at this point.
@@ -148,8 +151,7 @@ def render_rays(ray_batch,
         # used to express the idea of the ray not having reflected up to this
         # sample yet.
         # [N_rays, N_samples]
-        weights = alpha * \
-            torch.cumprod(1.-alpha + 1e-10, axis=-1, exclusive=True)
+        weights = alpha * torch.cumprod(1.-alpha + 1e-10, axis=-1, exclusive=True) # DIFFERENT
             #tf.math.cumprod(1.-alpha + 1e-10, axis=-1, exclusive=True)
             #torch.cumprod(input, dim, *, dtype=None, out=None)
             
@@ -327,7 +329,6 @@ def render(H, W, focal,
 
         # Make all directions unit magnitude.
         # shape: [batch_size, 3]
-        #viewdirs = viewdirs / tf.linalg.norm(viewdirs, axis=-1, keepdims=True)
         #torch.linalg.norm
         viewdirs = viewdirs / torch.linalg.norm(viewdirs, axis=-1, keepdims=True)
         #viewdirs = tf.cast(tf.reshape(viewdirs, [-1, 3]), dtype=tf.float32)
@@ -344,8 +345,7 @@ def render(H, W, focal,
     rays_o = torch.type(torch.reshape(rays_o, [-1, 3]), dtype=torch.float32)
     #rays_d = tf.cast(tf.reshape(rays_d, [-1, 3]), dtype=tf.float32)
     rays_d = torch.type(torch.reshape(rays_d, [-1, 3]), dtype=torch.float32)
-    near, far = near * \
-        torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
+    near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
         #tf.ones_like(rays_d[..., :1]), far * tf.ones_like(rays_d[..., :1])
         
 
@@ -383,7 +383,7 @@ def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=N
     disps = []
 
     t = time.time()
-    for i, c2w in enumerate(render_poses):
+    for i, c2w in enumerate(render_poses): # DIFFERENCE
         print(i, time.time() - t)
         t = time.time()
         rgb, disp, acc, _ = render(
@@ -418,11 +418,11 @@ def create_nerf(args):
     if args.use_viewdirs:
         embeddirs_fn, input_ch_views = get_embedder(
             args.multires_views, args.i_embed)
-    output_ch = 4
+    output_ch = 4 # DIFFERENT
     skips = [4]
     model = NeRF(D=args.netdepth, W=args.netwidth,
         input_ch=input_ch, output_ch=output_ch, skips=skips,
-        input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs)
+        input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
   
     grad_vars = list(model.parameters())
     models = {'model': model}
@@ -432,7 +432,7 @@ def create_nerf(args):
         model_fine = NeRF(
             D=args.netdepth_fine, W=args.netwidth_fine,
             input_ch=input_ch, output_ch=output_ch, skips=skips,
-            input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs)
+            input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs).to(device)
         grad_vars += list(model_fine.parameters())
         models['model_fine'] = model_fine
 
