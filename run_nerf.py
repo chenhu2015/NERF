@@ -16,28 +16,7 @@ from load_deepvoxels import load_dv_data
 from load_blender import load_blender_data
 
 
-tf.compat.v1.enable_eager_execution()
-
-
-
-import os
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
-import sys
-import tensorflow as tf
-import numpy as np
-import imageio
-import json
-import random
-import time
-from run_nerf_helpers import *
-from load_llff import load_llff_data
-from load_deepvoxels import load_dv_data
-from load_blender import load_blender_data
-
-
-tf.compat.v1.enable_eager_execution()
-
+np.seed(0)
 
 def batchify(fn, chunk):
     """Constructs a version of 'fn' that applies to smaller batches."""
@@ -45,17 +24,12 @@ def batchify(fn, chunk):
         return fn
 
     def ret(inputs):
-        #return tf.concat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
-        #torch.cat(tensors, dim=0, *, out=None)
         return torch.concat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
     return ret
 
 
 def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
     """Prepares inputs and applies network 'fn'."""
-
-    #inputs_flat = tf.reshape(inputs, [-1, inputs.shape[-1]])
-    #torch.reshape(input, shape)
     inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
 
     embedded = embed_fn(inputs_flat)
@@ -231,7 +205,7 @@ def render_rays(ray_batch,
     else:
         # Sample linearly in inverse depth (disparity).
         z_vals = 1./(1./near * (1.-t_vals) + 1./far * (t_vals))
-    z_vals = tf.broadcast_to(z_vals, [N_rays, N_samples])
+    z_vals = torch.broadcast_to(z_vals, [N_rays, N_samples])
 
     # Perturb sampling time along each ray.
     if perturb > 0.:
@@ -305,7 +279,7 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
                 all_ret[k] = []
             all_ret[k].append(ret[k])
 
-    all_ret = {k: tf.concat(all_ret[k], 0) for k in all_ret}
+    all_ret = {k: torch.concat(all_ret[k], 0) for k in all_ret}
     return all_ret
 
 
@@ -395,13 +369,6 @@ def render(H, W, focal,
     ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
     return ret_list + [ret_dict]
 
-
-
-# ============================================================================================================================================
-# ==================================================== MICHAEL'S IMPLEMENTAION BEGINS UNDER THIS COMMENT!!! ==================================
-# ============================================================================================================================================
-
-
 def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
 
     H, W, focal = hwf
@@ -453,20 +420,20 @@ def create_nerf(args):
             args.multires_views, args.i_embed)
     output_ch = 4
     skips = [4]
-    model = init_nerf_model(
-        D=args.netdepth, W=args.netwidth,
+    model = NeRF(D=args.netdepth, W=args.netwidth,
         input_ch=input_ch, output_ch=output_ch, skips=skips,
         input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs)
-    grad_vars = model.trainable_variables
+  
+    grad_vars = list(model.parameters())
     models = {'model': model}
 
     model_fine = None
     if args.N_importance > 0:
-        model_fine = init_nerf_model(
+        model_fine = NeRF(
             D=args.netdepth_fine, W=args.netwidth_fine,
             input_ch=input_ch, output_ch=output_ch, skips=skips,
             input_ch_views=input_ch_views, use_viewdirs=args.use_viewdirs)
-        grad_vars += model_fine.trainable_variables
+        grad_vars += list(model_fine.parameters())
         models['model_fine'] = model_fine
 
     def network_query_fn(inputs, viewdirs, network_fn): return run_network(
@@ -474,6 +441,8 @@ def create_nerf(args):
         embed_fn=embed_fn,
         embeddirs_fn=embeddirs_fn,
         netchunk=args.netchunk)
+    
+    optimizer = torch.optim.Adam(params = grad_vars, lr = args.lrate)
 
     render_kwargs_train = {
         'network_query_fn': network_query_fn,
@@ -521,7 +490,7 @@ def create_nerf(args):
             print('Reloading fine from', ft_weights_fine)
             model_fine.set_weights(np.load(ft_weights_fine, allow_pickle=True))
 
-    return render_kwargs_train, render_kwargs_test, start, grad_vars, models
+    return render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer
 
 
 def config_parser():
@@ -730,7 +699,7 @@ def train():
             file.write(open(args.config, 'r').read())
 
     # Create nerf model
-    render_kwargs_train, render_kwargs_test, start, grad_vars, models = create_nerf(
+    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_nerf(
         args)
 
     global_step = start
@@ -840,7 +809,7 @@ def train():
                     if i < 10:
                         print('precrop', dH, dW, coords[0,0], coords[-1,-1])
                 else:
-                    coords = torch.stack(tf.meshgrid(
+                    coords = torch.stack(torch.meshgrid(
                         torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)
 
                 coords = torch.reshape(coords, [-1, 2])
@@ -885,17 +854,19 @@ def train():
             path = os.path.join(
                 basedir, expname, '{}_{:06d}.npy'.format(i))
 
-            torch.save({"mlp_fn_states": render_kwargs_train["network_fn"].state_dict(), "mlp_fine_states": render_kwargs_train["network_fine"].state_dict(),"optimizer_state_dict": optimizer.state_dict(), "global_step": global_step,}, path)
+            torch.save({"mlp_fn_states": render_kwargs_train["network_fn"].state_dict(),
+                        "mlp_fine_states": render_kwargs_train["network_fine"].state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "global_step": global_step,}, path)
 
             print('saved weights at', path)
 
-        if i % args.i_weights == 0:
-            save_weights(models[k], i)
+        #if i % args.i_weights == 0:
+        #    save_weights(models[k], i)
 
         if i % args.i_video == 0 and i > 0:
-
-            rgbs, disps = render_path(
-                render_poses, hwf, args.chunk, render_kwargs_test)
+            with torch.no_grad():
+              rgbs, disps = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
             print('Done, saving', rgbs.shape, disps.shape)
             moviebase = os.path.join(
                 basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
@@ -904,20 +875,21 @@ def train():
             imageio.mimwrite(moviebase + 'disp.mp4',
                              to8b(disps / np.max(disps)), fps=30, quality=8)
 
-            if args.use_viewdirs:
-                render_kwargs_test['c2w_staticcam'] = render_poses[0][:3, :4]
-                rgbs_still, _ = render_path(
-                    render_poses, hwf, args.chunk, render_kwargs_test)
-                render_kwargs_test['c2w_staticcam'] = None
-                imageio.mimwrite(moviebase + 'rgb_still.mp4',
-                                 to8b(rgbs_still), fps=30, quality=8)
+            #if args.use_viewdirs:
+            #    render_kwargs_test['c2w_staticcam'] = render_poses[0][:3, :4]
+            #    rgbs_still, _ = render_path(
+            #        render_poses, hwf, args.chunk, render_kwargs_test)
+            #    render_kwargs_test['c2w_staticcam'] = None
+            #    imageio.mimwrite(moviebase + 'rgb_still.mp4',
+            #                    to8b(rgbs_still), fps=30, quality=8)
 
         if i % args.i_testset == 0 and i > 0:
             testsavedir = os.path.join(
                 basedir, expname, 'testset_{:06d}'.format(i))
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', poses[i_test].shape)
-            render_path(poses[i_test], hwf, args.chunk, render_kwargs_test,
+            with torch.no_grad():
+              render_path(poses[i_test], hwf, args.chunk, render_kwargs_test,
                         gt_imgs=images[i_test], savedir=testsavedir)
             print('Saved test set')
 
@@ -928,6 +900,6 @@ def train():
           
     global_step += 1
 
-
-if __name__ == '__main__':
+if __name__=='__main__':
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
     train()

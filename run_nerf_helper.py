@@ -61,7 +61,7 @@ class Embedder:
 def get_embedder(multires, i=0):
 
     if i == -1:
-        return nn.Identity, 3
+        return nn.Identity(), 3
 
     embed_kwargs = {
         'include_input': True,
