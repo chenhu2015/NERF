@@ -144,7 +144,8 @@ class NeRF(nn.Module):
     # Create model layers
     self.layers = nn.ModuleList(
       [nn.Linear(self.d_input, d_filter)] +
-      [nn.Linear(d_filter + self.d_input, d_filter) if i in skip else nn.Linear(d_filter, d_filter) for i in range(n_layers - 1)]
+      [nn.Linear(d_filter + self.d_input, d_filter) if i in skip \
+       else nn.Linear(d_filter, d_filter) for i in range(n_layers - 1)]
     )
 
     # Bottleneck layers
@@ -201,8 +202,8 @@ class NeRF(nn.Module):
 
 def get_rays(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
-    i, j = torch.meshgrid(torch.linspace(0, W-1, W, dtype=torch.float32),
-                       torch.linspace(0, H-1, H, dtype=torch.float32), indexing='xy')
+    i, j = torch.meshgrid(torch.range(W, dtype=torch.float32),
+                       torch.range(H, dtype=torch.float32), indexing='xy')
     dirs = torch.stack([(i-W*.5)/focal, -(j-H*.5)/focal, -torch.ones_like(i)], -1)
     rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], -1)
     rays_o = torch.broadcast_to(c2w[:3, -1], rays_d.shape)

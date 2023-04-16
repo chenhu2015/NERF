@@ -332,19 +332,19 @@ def render(H, W, focal,
         #torch.linalg.norm
         viewdirs = viewdirs / torch.linalg.norm(viewdirs, axis=-1, keepdims=True)
         #viewdirs = tf.cast(tf.reshape(viewdirs, [-1, 3]), dtype=tf.float32)
-        viewdirs = torch.reshape(viewdirs, [-1, 3]).float()
+        viewdirs = torch.type(torch.reshape(viewdirs, [-1, 3]), dtype=torch.float32)
 
     sh = rays_d.shape  # [..., 3]
     if ndc:
         # for forward facing scenes
         rays_o, rays_d = ndc_rays(
-            H, W, focal, 1., rays_o, rays_d)
+            H, W, focal, torch.type(1., torch.float32), rays_o, rays_d)
 
     # Create ray batch
     #rays_o = tf.cast(tf.reshape(rays_o, [-1, 3]), dtype=tf.float32)
-    rays_o = torch.reshape(rays_o, [-1, 3]).float()
+    rays_o = torch.type(torch.reshape(rays_o, [-1, 3]), dtype=torch.float32)
     #rays_d = tf.cast(tf.reshape(rays_d, [-1, 3]), dtype=tf.float32)
-    rays_d = torch.reshape(rays_d, [-1, 3]).float()
+    rays_d = torch.type(torch.reshape(rays_d, [-1, 3]), dtype=torch.float32)
     near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
         #tf.ones_like(rays_d[..., :1]), far * tf.ones_like(rays_d[..., :1])
         
@@ -703,8 +703,8 @@ def train():
     global_step = start
 
     bds_dict = {
-        'near': near,
-        'far': far,
+        'near': near.type(torch.float32),
+        'far': far.type(torch.float32),
     }
     render_kwargs_train.update(bds_dict)
     render_kwargs_test.update(bds_dict)
@@ -735,9 +735,6 @@ def train():
     # Prepare raybatch tensor if batching random rays
     N_rand = args.N_rand
     use_batching = not args.no_batching
-
-    poses = torch.Tensor(poses).to(device)
-
     if use_batching:
         # For random ray batching.
         #
@@ -795,7 +792,7 @@ def train():
         else:
             # Random from one image
             img_i = np.random.choice(i_train)
-            target = torch.Tensor(images[img_i]).to(device)
+            target = images[img_i]
             pose = poses[img_i, :3, :4]
 
             if N_rand is not None:
@@ -817,10 +814,10 @@ def train():
                 select_inds = np.random.choice(
                     coords.shape[0], size=[N_rand], replace=False)
                 
-                rays_o = rays_o[(coords[select_inds]).long()[:, 0], (coords[select_inds]).long()[:, 1]]
-                rays_d = rays_d[(coords[select_inds]).long()[:, 0], (coords[select_inds]).long()[:, 1]]
+                rays_o = rays_o[(coords[select_inds])[:, 0], (coords[select_inds])[:, 1]]
+                rays_d = rays_d[(coords[select_inds])[:, 0], (coords[select_inds])[:, 1]]
                 batch_rays = torch.stack([rays_o, rays_d], 0)
-                target_s = target[(coords[select_inds]).long()[:, 0], (coords[select_inds]).long()[:, 1]]
+                target_s = target[(coords[select_inds])[:, 0], (coords[select_inds])[:, 1]]
 
         #####  Core optimization loop  #####
         
