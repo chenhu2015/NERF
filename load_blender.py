@@ -1,4 +1,5 @@
 import os
+import cv2
 import torch
 import numpy as np
 import imageio 
@@ -30,9 +31,9 @@ rot_theta = lambda th : torch.Tensor([
 
 def pose_spherical(theta, phi, radius):
     c2w = trans_t(radius)
-    c2w = rot_phi(phi/180.*np.pi) @ c2w
-    c2w = rot_theta(theta/180.*np.pi) @ c2w
-    c2w = np.array([[-1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]]) @ c2w
+    c2w = rot_phi(torch.tensor(phi)/180.*np.pi) @ c2w
+    c2w = rot_theta(torch.tensor(theta)/180.*np.pi) @ c2w
+    c2w = torch.Tensor(np.array([[-1,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]])) @ c2w
     return c2w
     
 
@@ -78,7 +79,11 @@ def load_blender_data(basedir, half_res=False, testskip=1):
     render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180,180,40+1)[:-1]],0)
     
     if half_res:
-        imgs = T.resize(size = [400, 400])(imgs).numpy()
+        resized_images = np.zeros((imgs.shape[0], H, W, 4))
+        for i, image in enumerate(imgs):
+          resized_images[i] = cv2.resize(image, (W, H))
+
+        imgs = resized_images
         H = H//2
         W = W//2
         focal = focal/2.
