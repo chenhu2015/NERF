@@ -284,12 +284,10 @@ def batchify_rays(rays_flat, chunk=1024*32, **kwargs):
     all_ret = {k: torch.concat(all_ret[k], 0) for k in all_ret}
     return all_ret
 
-
-def render(H, W, focal,
-           chunk=1024*32, rays=None, c2w=None, ndc=True,
-           near=0., far=1.,
-           use_viewdirs=False, c2w_staticcam=None,
-           **kwargs):
+def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
+                  near=0., far=1.,
+                  use_viewdirs=False, c2w_staticcam=None,
+                  **kwargs):
     """Render rays
     Args:
       H: int. Height of image in pixels.
@@ -312,10 +310,9 @@ def render(H, W, focal,
       acc_map: [batch_size]. Accumulated opacity (alpha) along a ray.
       extras: dict with everything returned by render_rays().
     """
-
     if c2w is not None:
         # special case to render full image
-        rays_o, rays_d = get_rays(H, W, focal, c2w)
+        rays_o, rays_d = get_rays(H, W, K, c2w)
     else:
         # use provided ray batch
         rays_o, rays_d = rays
@@ -325,55 +322,41 @@ def render(H, W, focal,
         viewdirs = rays_d
         if c2w_staticcam is not None:
             # special case to visualize effect of viewdirs
-            rays_o, rays_d = get_rays(H, W, focal, c2w_staticcam)
+            rays_o, rays_d = get_rays(H, W, K, c2w_staticcam)
+        viewdirs = viewdirs / torch.norm(viewdirs, dim=-1, keepdim=True)
+        viewdirs = torch.reshape(viewdirs, [-1,3]).float()
 
-        # Make all directions unit magnitude.
-        # shape: [batch_size, 3]
-        #torch.linalg.norm
-        viewdirs = viewdirs / torch.linalg.norm(viewdirs, axis=-1, keepdims=True)
-        #viewdirs = tf.cast(tf.reshape(viewdirs, [-1, 3]), dtype=tf.float32)
-        viewdirs = torch.reshape(viewdirs, [-1, 3]).float()
-
-    sh = rays_d.shape  # [..., 3]
+    sh = rays_d.shape # [..., 3]
     if ndc:
         # for forward facing scenes
-        rays_o, rays_d = ndc_rays(
-            H, W, focal, torch.type(1., torch.float32), rays_o, rays_d)
+        rays_o, rays_d = ndc_rays(H, W, K[0][0], 1., rays_o, rays_d)
 
     # Create ray batch
-    #rays_o = tf.cast(tf.reshape(rays_o, [-1, 3]), dtype=tf.float32)
-    rays_o = torch.reshape(rays_o, [-1, 3]).float()
-    #rays_d = tf.cast(tf.reshape(rays_d, [-1, 3]), dtype=tf.float32)
-    rays_d = torch.reshape(rays_d, [-1, 3]).float()
-    near, far = near * torch.ones_like(rays_d[..., :1]), far * torch.ones_like(rays_d[..., :1])
-        #tf.ones_like(rays_d[..., :1]), far * tf.ones_like(rays_d[..., :1])
-        
+    rays_o = torch.reshape(rays_o, [-1,3]).float()
+    rays_d = torch.reshape(rays_d, [-1,3]).float()
 
-    # (ray origin, ray direction, min dist, max dist) for each ray
-    #rays = tf.concat([rays_o, rays_d, near, far], axis=-1)
-    rays = torch.concat([rays_o, rays_d, near, far], axis=-1)
+    near, far = near * torch.ones_like(rays_d[...,:1]), far * torch.ones_like(rays_d[...,:1])
+    rays = torch.cat([rays_o, rays_d, near, far], -1)
     if use_viewdirs:
-        # (ray origin, ray direction, min dist, max dist, normalized viewing direction)
-        #rays = tf.concat([rays, viewdirs], axis=-1)
-        rays = torch.concat([rays, viewdirs], axis=-1)
+        rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
     all_ret = batchify_rays(rays, chunk, **kwargs)
     for k in all_ret:
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
-        #all_ret[k] = tf.reshape(all_ret[k], k_sh)
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
     k_extract = ['rgb_map', 'disp_map', 'acc_map']
     ret_list = [all_ret[k] for k in k_extract]
-    ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
+    ret_dict = {k : all_ret[k] for k in all_ret if k not in k_extract}
     return ret_list + [ret_dict]
 
-def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
+
+def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
 
     H, W, focal = hwf
 
-    if render_factor != 0:
+    if render_factor!=0:
         # Render downsampled for speed
         H = H//render_factor
         W = W//render_factor
@@ -383,24 +366,26 @@ def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=N
     disps = []
 
     t = time.time()
-    for i, c2w in enumerate(render_poses): # DIFFERENCE
+    for i, c2w in enumerate(tqdm(render_poses)):
         print(i, time.time() - t)
         t = time.time()
-        rgb, disp, acc, _ = render(
-            H, W, focal, chunk=chunk, c2w=c2w[:3, :4], **render_kwargs)
-        rgbs.append(rgb.numpy())
-        disps.append(disp.numpy())
-        if i == 0:
+        rgb, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs)
+        rgbs.append(rgb.cpu().numpy())
+        disps.append(disp.cpu().numpy())
+        if i==0:
             print(rgb.shape, disp.shape)
 
-        if gt_imgs is not None and render_factor == 0:
-            p = -10. * np.log10(np.mean(np.square(rgb - gt_imgs[i])))
+        """
+        if gt_imgs is not None and render_factor==0:
+            p = -10. * np.log10(np.mean(np.square(rgb.cpu().numpy() - gt_imgs[i])))
             print(p)
+        """
 
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
             filename = os.path.join(savedir, '{:03d}.png'.format(i))
             imageio.imwrite(filename, rgb8)
+
 
     rgbs = np.stack(rgbs, 0)
     disps = np.stack(disps, 0)
@@ -1035,6 +1020,8 @@ def train():
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
+                #print("render_kwargs_test: ",render_kwargs_test )
+                #print("render_kwargs_test type: ", type(render_kwargs_test ))
                 rgbs, disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test)
             print('Done, saving', rgbs.shape, disps.shape)
             moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
