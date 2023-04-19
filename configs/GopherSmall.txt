@@ -1,6 +1,6 @@
 expname = Gopher_test
-basedir = ./GopherPlainData/logs
-datadir = ./GopherPlainData
+basedir = ./GopherDataPlain/logs
+datadir = ./GopherDataPlain
 dataset_type = llff
 
 
