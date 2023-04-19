@@ -1,9 +1,9 @@
 expname = Gopher_test
-basedir = ./logs
-datadir = ./data/nerf_llff_data/fern
+basedir = ./drive/MyDrive/GopherPicsWCOLMAP/sceneDir/logs
+datadir = ./drive/MyDrive/GopherPicsWCOLMAP/sceneDir
 dataset_type = llff
 
-factor = 8
+
 llffhold = 8
 
 N_rand = 1024
