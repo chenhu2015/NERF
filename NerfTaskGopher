@@ -1,10 +1,10 @@
 #!/bin/bash -l
 #SBATCH --job-name="NeRF_job_Gopher"
 #SBATCH --ntasks=128
-#SBATCH --output=NeRF.out
-#SBATCH --error=NeRF.err
+#SBATCH --output=Nerf.out
+#SBATCH --error=Nerf.err
 #SBATCH --mail-type=ALL
-#SBATCH --mail-user=huxxx853@umn.edu
+#SBATCH --mail-user=coffe176@umn.edu
 #SBATCH --time=24:00:00
 #SBATCH -p interactive-gpu
 #SBATCH --gres=gpu:a40:1
