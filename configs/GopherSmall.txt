@@ -1,6 +1,6 @@
 expname = Gopher_test
-basedir = ./drive/MyDrive/GopherPicsWCOLMAP/sceneDir/logs
-datadir = ./drive/MyDrive/GopherPicsWCOLMAP/sceneDir
+basedir = ./GopherPlainData/logs
+datadir = ./GopherPlainData
 dataset_type = llff
 
 
