@@ -1,4 +1,4 @@
 mkdir -p GopherPlainData
-cd data
+cd GopherPlainData
 unzip GopherDataPlain.zip
 cd ..
