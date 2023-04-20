@@ -6,4 +6,4 @@ matplotlib
 configargparse
 tensorboard>=2.0
 tqdm
-opencv-python
+opencv-python==3.4.2.17
