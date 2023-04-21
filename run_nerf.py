@@ -8,7 +8,7 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 from run_nerf_helper import *
 from load_llff import load_llff_data
