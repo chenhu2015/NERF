@@ -878,8 +878,8 @@ def train():
 
             print('saved weights at', path)
 
-        if i % args.i_weights == 0:
-            save_weights(i)
+        #if i % args.i_weights == 0:
+        #    save_weights(i)
 
         if i % args.i_video == 0 and i > 0:
             with torch.no_grad():
