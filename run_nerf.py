@@ -397,8 +397,8 @@ def render_path(render_poses, transform_matrix, hwf, chunk, render_kwargs, gt_im
         t = time.time()
         rgb, disp, acc, _ = render(
             H, W, transform_matrix, chunk=chunk, c2w=c2w[:3, :4], **render_kwargs)
-        rgbs.append(rgb.numpy())
-        disps.append(disp.numpy())
+        rgbs.append(rgb.cpu().numpy())
+        disps.append(disp.cpu().numpy())
 
         if i == 0:
             print(rgb.shape, disp.shape)
