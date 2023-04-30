@@ -205,6 +205,8 @@ class NeRF(nn.Module):
 
 def get_rays(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
+    focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+
     i, j = torch.meshgrid(torch.linspace(0, W-1, W),
                        torch.linspace(0, H-1, H))
     i = i.t()
@@ -217,6 +219,8 @@ def get_rays(H, W, focal, c2w):
 
 def get_rays_np(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
+    focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+
     i, j = np.meshgrid(np.arange(W, dtype=np.float32),
                        np.arange(H, dtype=np.float32), indexing='xy')
     dirs = np.stack([(i-focal[0][2]*.5)/focal[0][0], -(j-focal[1][2])/focal[1][1], -np.ones_like(i)], -1)
