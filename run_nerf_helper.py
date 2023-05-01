@@ -186,14 +186,14 @@ class NeRF(nn.Module):
       # Split alpha from network output
       alpha = self.alpha_out(x)
       feature = self.rgb_filters(x)
-      x = torch.concat([feature, x_views], dim=-1)
+      x = torch.cat([feature, x_views], dim=-1)
 
       x = self.branch(x)
       x = F.relu(x, inplace=False)
       rgb = self.output(x)
 
       # Concatenate alphas to output
-      res = torch.concat([rgb, alpha], dim=-1)
+      res = torch.cat([rgb, alpha], dim=-1)
     else:
       # Simple output
       res = self.output(x)
@@ -211,8 +211,8 @@ def get_rays(H, W, focal, c2w):
                        torch.linspace(0, H-1, H))
     i = i.t()
     j = j.t()
-    dirs = torch.stack([(i-focal[0][2]*.5)/focal[0][0], -(j-focal[1][2])/focal[1][1], -torch.ones_like(i)], -1)
-    rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], -1)
+    dirs = torch.stack([(i-focal[0][2])/focal[0][0], -(j-focal[1][2])/focal[1][1], -torch.ones_like(i)], dim = -1)
+    rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], dim = -1)
     rays_o = torch.broadcast_to(c2w[:3, -1], rays_d.shape)
     return rays_o, rays_d
 
@@ -223,8 +223,8 @@ def get_rays_np(H, W, focal, c2w):
 
     i, j = np.meshgrid(np.arange(W, dtype=np.float32),
                        np.arange(H, dtype=np.float32), indexing='xy')
-    dirs = np.stack([(i-focal[0][2]*.5)/focal[0][0], -(j-focal[1][2])/focal[1][1], -np.ones_like(i)], -1)
-    rays_d = np.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], -1)
+    dirs = np.stack([(i-focal[0][2])/focal[0][0], -(j-focal[1][2])/focal[1][1], -np.ones_like(i)], dim = -1)
+    rays_d = np.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], dim = -1)
     rays_o = np.broadcast_to(c2w[:3, -1], np.shape(rays_d))
     return rays_o, rays_d
 
@@ -261,8 +261,8 @@ def ndc_rays(H, W, focal, near, rays_o, rays_d):
         (rays_d[..., 1]/rays_d[..., 2] - rays_o[..., 1]/rays_o[..., 2])
     d2 = -2. * near / rays_o[..., 2]
 
-    rays_o = torch.stack([o0, o1, o2], -1)
-    rays_d = torch.stack([d0, d1, d2], -1)
+    rays_o = torch.stack([o0, o1, o2], dim = -1)
+    rays_d = torch.stack([d0, d1, d2], dim = -1)
 
     return rays_o, rays_d
 
@@ -273,9 +273,9 @@ def sample_pdf(bins, weights, N_samples, det=False, test=False):
 
     # Get pdf
     weights += 1e-5  # prevent nans
-    pdf = weights / torch.sum(weights, -1, keepdims=True)
-    cdf = torch.cumsum(pdf, -1)
-    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
+    pdf = weights / torch.sum(weights, dim = -1, keepdims=True)
+    cdf = torch.cumsum(pdf, dim = -1)
+    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], dim = -1)
 
     # Take uniform samples
     if det:
@@ -302,10 +302,10 @@ def sample_pdf(bins, weights, N_samples, det=False, test=False):
     inds = torch.searchsorted(cdf, u, right=True)
     below = torch.max(torch.zeros_like(inds-1), inds-1)
     above = torch.min((cdf.shape[-1]-1) * torch.ones_like(inds), inds)
-    inds_g = torch.stack([below, above], -1)
+    inds_g = torch.stack([below, above], dim = -1)
     matched_shape = [inds_g.shape[0], inds_g.shape[1], cdf.shape[-1]]
-    cdf_g = torch.gather(cdf.unsqueeze(1).expand(matched_shape), 2, inds_g)
-    bins_g = torch.gather(bins.unsqueeze(1).expand(matched_shape), 2, inds_g)
+    cdf_g = torch.gather(torch.broadcast_to(cdf.unsqueeze(1), matched_shape), dim = 2, index = inds_g)
+    bins_g = torch.gather(torch.broadcast_to(bins.unsqueeze(1), matched_shape), dim = 2, index = inds_g)
 
     denom = (cdf_g[..., 1]-cdf_g[..., 0])
     denom = torch.where(denom < 1e-5, torch.ones_like(denom), denom)
