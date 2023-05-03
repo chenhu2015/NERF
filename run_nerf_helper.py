@@ -213,7 +213,7 @@ def get_rays(H, W, focal, c2w):
     j = j.t()
     dirs = torch.stack([(i-focal[0][2])/focal[0][0], -(j-focal[1][2])/focal[1][1], -torch.ones_like(i)], dim = -1)
     rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], dim = -1)
-    rays_o = torch.broadcast_to(c2w[:3, -1], rays_d.shape)
+    rays_o = c2w[:3, -1].expand(rays_d.shape)
     return rays_o, rays_d
 
 

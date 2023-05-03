@@ -28,7 +28,7 @@ def batchify(fn, chunk):
         return fn
 
     def ret(inputs):
-        return torch.concat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
+        return torch.cat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
     return ret
 
 
@@ -315,7 +315,7 @@ def render(H, W, focal,
       extras: dict with everything returned by render_rays().
     """
 
-    eye_mat = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+    focal = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
 
     if c2w is not None:
         # special case to render full image
@@ -334,7 +334,7 @@ def render(H, W, focal,
         # Make all directions unit magnitude.
         # shape: [batch_size, 3]
         #torch.linalg.norm
-        viewdirs = viewdirs / torch.linalg.norm(viewdirs, dim=-1, keepdims=True)
+        viewdirs = viewdirs / torch.linalg.norm(viewdirs, dim=-1, keepdim=True)
         #viewdirs = tf.cast(tf.reshape(viewdirs, [-1, 3]), dtype=tf.float32)
         viewdirs = torch.reshape(viewdirs, [-1, 3]).float()
 
@@ -342,7 +342,7 @@ def render(H, W, focal,
     if ndc:
         # for forward facing scenes
         rays_o, rays_d = ndc_rays(
-            H, W, focal[0][0], torch.type(1., torch.float32), rays_o, rays_d)
+            H, W, focal[0][0], 1.0, rays_o, rays_d)
 
     # Create ray batch
     #rays_o = tf.cast(tf.reshape(rays_o, [-1, 3]), dtype=tf.float32)
