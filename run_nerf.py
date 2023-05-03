@@ -46,7 +46,7 @@ def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
         input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
         embedded_dirs = embeddirs_fn(input_dirs_flat)
         #embedded = tf.concat([embedded, embedded_dirs], -1)
-        embedded = torch.concat([embedded, embedded_dirs], -1)
+        embedded = torch.cat([embedded, embedded_dirs], -1)
 
     outputs_flat = batchify(fn, netchunk)(embedded)
     #outputs = tf.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
@@ -227,7 +227,7 @@ def render_rays(ray_batch,
 
     # Points in space to evaluate model at.
     pts = rays_o[..., None, :] + rays_d[..., None, :] * \
-        z_vals[..., :, None]  # [N_rays, N_samples, 3]
+        z_vals[..., :, None] # [N_rays, N_samples, 3]
 
     # Evaluate model at each point.
     raw = network_query_fn(pts, viewdirs, network_fn)  # [N_rays, N_samples, 4]
@@ -376,7 +376,7 @@ def render(H, W, focal,
 def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
 
     H, W, focal = hwf
-    eye_mat = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+    eye_mat = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
 
     if render_factor != 0:
         # Render downsampled for speed
