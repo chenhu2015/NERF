@@ -21,6 +21,8 @@ if torch.cuda.is_available():
   device = torch.device("cuda")
 
 np.random.seed(0)
+DEBUG = False
+
 
 def batchify(fn, chunk):
     """Constructs a version of 'fn' that applies to smaller batches."""
@@ -122,7 +124,7 @@ def render_rays(ray_batch,
 
         # The 'distance' from the last integration time is infinity.
         #dists = tf.concat([dists, tf.broadcast_to([1e10], dists[..., :1].shape)],axis=-1)  # [N_rays, N_samples]
-        dists = torch.concat([dists, torch.broadcast_to(torch.Tensor([1e10]), dists[..., :1].shape)], axis = -1)
+        dists = torch.cat([dists, torch.broadcast_to(torch.Tensor([1e10]), dists[..., :1].shape)], dim = -1)
         #dists = torch.concat([dists, torch.Tensor([1e10]).expand(dists[..., :1].shape)],axis=-1)  # [N_rays, N_samples]
 
 
@@ -153,7 +155,7 @@ def render_rays(ray_batch,
         # used to express the idea of the ray not having reflected up to this
         # sample yet.
         # [N_rays, N_samples]
-        weights = alpha * torch.cumprod(1.-alpha + 1e-10, axis=-1, exclusive=True) # DIFFERENT
+        weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1] # DIFFERENT
             #tf.math.cumprod(1.-alpha + 1e-10, axis=-1, exclusive=True)
             #torch.cumprod(input, dim, *, dtype=None, out=None)
             
@@ -170,7 +172,7 @@ def render_rays(ray_batch,
         # Disparity map is inverse depth.
         #disp_map = 1./tf.maximum(1e-10, depth_map, tf.reduce_sum(weights, axis=-1))
         #torch.maximum(input, other, *, out=None) 
-        disp_map = 1.0 / torch.max(1e-10, torch.ones_like(depth_map), torch.sum(weights, dim = -1))
+        disp_map = 1.0 / torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, dim = -1))
 
         # Sum of weights along each ray. This value is in [0, 1] up to numerical error.
         #acc_map = tf.reduce_sum(weights, -1)
@@ -315,7 +317,7 @@ def render(H, W, focal,
       extras: dict with everything returned by render_rays().
     """
 
-    focal = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
+    #focal = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
 
     if c2w is not None:
         # special case to render full image
@@ -373,10 +375,10 @@ def render(H, W, focal,
     ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
     return ret_list + [ret_dict]
 
-def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
+def render_path(render_poses, eye_mat, hwf, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
 
     H, W, focal = hwf
-    eye_mat = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
+    #eye_mat = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
 
     if render_factor != 0:
         # Render downsampled for speed
@@ -388,7 +390,7 @@ def render_path(render_poses, hwf, chunk, render_kwargs, gt_imgs=None, savedir=N
     disps = []
 
     t = time.time()
-    for i, c2w in enumerate(render_poses): # DIFFERENCE
+    for i, c2w in enumerate(tqdm(render_poses)): # DIFFERENCE
         print(i, time.time() - t)
         t = time.time()
         rgb, disp, acc, _ = render(
@@ -414,15 +416,15 @@ def create_nerf(args):
 
     embed_fn, input_ch = get_embedder(args.multires, args.i_embed)
 
-    input_ch_views = 0
+    input_views = 0
     embeddirs_fn = None
     if args.use_viewdirs:
-        embeddirs_fn, input_ch_views = get_embedder(
+        embeddirs_fn, input_views = get_embedder(
             args.multires_views, args.i_embed)
     output_ch = 4 # DIFFERENT
     skips = [4]
-    model = NeRF(d_input=input_ch, n_layers=args.netdepth_fine,
-            d_filter=args.netwidth_fine).to(device)
+    model = NeRF(d_input=input_ch, d_input_views=input_views, n_layers=args.netdepth,
+            d_filter=args.netwidth, d_viewdirs=args.use_viewdirs).to(device)
   
     grad_vars = list(model.parameters())
     models = {'model': model}
@@ -430,8 +432,8 @@ def create_nerf(args):
     model_fine = None
     if args.N_importance > 0:
         model_fine = NeRF(
-            d_input=input_ch, n_layers=args.netdepth_fine,
-            d_filter=args.netwidth_fine).to(device)
+            d_input=input_ch, d_input_views=input_views, n_layers=args.netdepth_fine,
+            d_filter=args.netwidth_fine, d_viewdirs=args.use_viewdirs).to(device)
         grad_vars += list(model_fine.parameters())
         models['model_fine'] = model_fine
 
@@ -594,11 +596,11 @@ def config_parser():
                         help='frequency of console printout and metric loggin')
     parser.add_argument("--i_img",     type=int, default=500,
                         help='frequency of tensorboard image logging')
-    parser.add_argument("--i_weights", type=int, default=10000,
+    parser.add_argument("--i_weights", type=int, default=500,
                         help='frequency of weight ckpt saving')
-    parser.add_argument("--i_testset", type=int, default=50000,
+    parser.add_argument("--i_testset", type=int, default=500,
                         help='frequency of testset saving')
-    parser.add_argument("--i_video",   type=int, default=50000,
+    parser.add_argument("--i_video",   type=int, default=500,
                         help='frequency of render_poses video saving')
 
     return parser
@@ -611,6 +613,8 @@ def train():
     
 
     # Load data
+
+    eye_mat = None
 
     if args.dataset_type == 'llff':
         images, poses, bds, render_poses, i_test = load_llff_data(args.datadir, args.factor,
@@ -656,6 +660,7 @@ def train():
             images = images[..., :3]
 
     elif args.dataset_type == 'deepvoxels':
+
         images, poses, render_poses, hwf, i_split = load_dv_data(scene=args.shape,
                                                                  basedir=args.datadir,
                                                                  testskip=args.testskip)
@@ -664,7 +669,7 @@ def train():
               render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
 
-        hemi_R = np.mean(np.linalg.norm(poses[:, :3, -1], dim=-1))
+        hemi_R = np.mean(np.linalg.norm(poses[:, :3, -1], axis=-1))
         near = hemi_R-1.
         far = hemi_R+1.
 
@@ -673,8 +678,10 @@ def train():
         return
 
     # Cast intrinsics to right types
-    H, W, focal = hwf
-    H, W = int(H), int(W)
+    H, W, focal = hwf 
+    eye_mat = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
+    H = int(H)
+    W = int(W)
     hwf = [H, W, focal]
 
     if args.render_test:
@@ -722,7 +729,7 @@ def train():
         os.makedirs(testsavedir, exist_ok=True)
         print('test poses shape', render_poses.shape)
 
-        rgbs, _ = render_path(render_poses, hwf, args.chunk, render_kwargs_test,
+        rgbs, _ = render_path(render_poses, eye_mat, hwf, args.chunk, render_kwargs_test,
                               gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
         print('Done rendering', testsavedir)
         imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'),
@@ -744,11 +751,11 @@ def train():
         print('get rays')
         # get_rays_np() returns rays_origin=[H, W, 3], rays_direction=[H, W, 3]
         # for each pixel in the image. This stack() adds a new dimension.
-        rays = [get_rays_np(H, W, focal, p) for p in poses[:, :3, :4]]
+        rays = [get_rays_np(H, W, eye_mat, p) for p in poses[:, :3, :4]]
         rays = np.stack(rays, axis=0)  # [N, ro+rd, H, W, 3]
         print('done, concats')
         # [N, ro+rd+rgb, H, W, 3]
-        rays_rgb = np.concatenate([rays, images[:, None, ...]], axis=1)
+        rays_rgb = np.concatenate([rays, images[:, None, ...]], 1)
         # [N, H, W, ro+rd+rgb, 3]
         rays_rgb = np.transpose(rays_rgb, [0, 2, 3, 1, 4])
         rays_rgb = np.stack([rays_rgb[i]
@@ -761,7 +768,7 @@ def train():
         print('done')
         i_batch = 0
 
-    N_iters = 200000
+    N_iters = 100000
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -770,7 +777,7 @@ def train():
     poses = torch.Tensor(poses).to(device)
 
     
-    for i in range(start+1, N_iters):
+    for i in range(start, N_iters):
         time0 = time.time()
 
         # Sample random ray batch
@@ -797,7 +804,7 @@ def train():
             pose = poses[img_i, :3, :4]
 
             if N_rand is not None:
-                rays_o, rays_d = get_rays(H, W, focal, pose)
+                rays_o, rays_d = get_rays(H, W, eye_mat, pose)
                 if i < args.precrop_iters:
                     dH = int(H//2 * args.precrop_frac)
                     dW = int(W//2 * args.precrop_frac)
@@ -805,8 +812,8 @@ def train():
                         torch.linspace(H//2 - dH, H//2 + dH - 1, 2 * dH), 
                         torch.linspace(W//2 - dW, W//2 + dW - 1, 2 * dW), 
                         ), -1)
-                    if i < 10:
-                        print('precrop', dH, dW, coords[0,0], coords[-1,-1])
+                    #if i < 10:
+                    #    print('precrop', dH, dW, coords[0,0], coords[-1,-1])
                 else:
                     coords = torch.stack(torch.meshgrid(
                         torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)
@@ -822,7 +829,7 @@ def train():
 
         #####  Core optimization loop  #####
         
-        rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, rays=batch_rays, verbose=i < 10, retraw=True, **render_kwargs_train)
+        rgb, disp, acc, extras = render(H, W, eye_mat, chunk=args.chunk, rays=batch_rays, verbose=i < 10, retraw=True, **render_kwargs_train)
 
         # Compute MSE loss between predicted and true RGB.
         optimizer.zero_grad()
@@ -835,12 +842,13 @@ def train():
         if 'rgb0' in extras:
             img_loss0 = img2mse(extras['rgb0'], target_s)
             loss += img_loss0
+            psnr0 = mse2psnr(img_loss0)
 
         loss.backward()
         optimizer.step()
 
-        for group in optimizer.param_group:
-            group["lr"] = args.lrate * ((0.1) ** (global_step / (args.lrate_decay * 1000)))
+        for group in optimizer.param_groups:
+            group["lr"] = args.lrate * ((10**-1) ** (global_step / (args.lrate_decay * 1000)))
 
         dt = time.time()-time0
 
@@ -850,7 +858,7 @@ def train():
 
         def save_weights(i):
             path = os.path.join(
-                basedir, expname, '{:06d}.tar'.format(i))
+                basedir, expname, '{:06d}.npy'.format(i))
 
             torch.save({"mlp_fn_states": render_kwargs_train["network_fn"].state_dict(),
                         "mlp_fine_states": render_kwargs_train["network_fine"].state_dict(),
@@ -864,7 +872,7 @@ def train():
 
         if i % args.i_video == 0 and i > 0:
             with torch.no_grad():
-              rgbs, disps = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
+              rgbs, disps = render_path(render_poses, eye_mat, hwf, args.chunk, render_kwargs_test)
             print('Done, saving', rgbs.shape, disps.shape)
             moviebase = os.path.join(
                 basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
@@ -887,13 +895,13 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print('test poses shape', poses[i_test].shape)
             with torch.no_grad():
-              render_path(poses[i_test], hwf, args.chunk, render_kwargs_test,
+              render_path(poses[i_test], eye_mat, hwf, args.chunk, render_kwargs_test,
                         gt_imgs=images[i_test], savedir=testsavedir)
             print('Saved test set')
 
         if i % args.i_print == 0 or i < 10:
 
-            print("Iteration: " + str(i) + " | PSNR: " + str(psnr.numpy()) + " | Loss: " + str(loss.numpy()))
+            print("Iteration: " + str(i) + " | PSNR: " + str(psnr.item()) + " | Loss: " + str(loss.item()))
             print('iter time {:.05f}'.format(dt))
           
     global_step += 1

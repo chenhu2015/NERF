@@ -143,6 +143,10 @@ class NeRF(nn.Module):
     self.skip = skip
     self.act = nn.functional.relu
     self.d_viewdirs = d_viewdirs
+    self.n_layers = n_layers
+    self.d_filter = d_filter
+    self.d_viewdirs = d_viewdirs
+
 
     # Create model layers
     self.layers = nn.ModuleList(
@@ -176,7 +180,7 @@ class NeRF(nn.Module):
 
     for i, layer in enumerate(self.layers):
       x = self.layers[i](x)
-      x = F.relu(x, inplace=False)
+      x = F.relu(x)
 
       if i in self.skip:
         x = torch.cat([x_input, x], dim=-1)
@@ -189,7 +193,7 @@ class NeRF(nn.Module):
       x = torch.cat([feature, x_views], dim=-1)
 
       x = self.branch(x)
-      x = F.relu(x, inplace=False)
+      x = F.relu(x)
       rgb = self.output(x)
 
       # Concatenate alphas to output
@@ -201,11 +205,11 @@ class NeRF(nn.Module):
     return res
 
 
-# Ray helpers
+   # Ray helpers
 
 def get_rays(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
-    focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+    #focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
 
     i, j = torch.meshgrid(torch.linspace(0, W-1, W),
                        torch.linspace(0, H-1, H))
@@ -219,7 +223,7 @@ def get_rays(H, W, focal, c2w):
 
 def get_rays_np(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
-    focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+    #focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
 
     i, j = np.meshgrid(np.arange(W, dtype=np.float32),
                        np.arange(H, dtype=np.float32), indexing='xy')
@@ -231,9 +235,7 @@ def get_rays_np(H, W, focal, c2w):
 
 def ndc_rays(H, W, focal, near, rays_o, rays_d):
     """Normalized device coordinate rays.
-
     Space such that the canvas is a cube with sides [-1, 1] in each axis.
-
     Args:
       H: int. Height in pixels.
       W: int. Width in pixels.
@@ -241,7 +243,6 @@ def ndc_rays(H, W, focal, near, rays_o, rays_d):
       near: float or array of shape[batch_size]. Near depth bound for the scene.
       rays_o: array of shape [batch_size, 3]. Camera origin.
       rays_d: array of shape [batch_size, 3]. Ray direction.
-
     Returns:
       rays_o: array of shape [batch_size, 3]. Camera origin in NDC.
       rays_d: array of shape [batch_size, 3]. Ray direction in NDC.
@@ -266,16 +267,15 @@ def ndc_rays(H, W, focal, near, rays_o, rays_d):
 
     return rays_o, rays_d
 
-
 # Hierarchical sampling helper
 
 def sample_pdf(bins, weights, N_samples, det=False, test=False):
 
     # Get pdf
-    weights += 1e-5  # prevent nans
-    pdf = weights / torch.sum(weights, dim = -1, keepdims=True)
-    cdf = torch.cumsum(pdf, dim = -1)
-    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], dim = -1)
+    weights = weights + 1e-5 
+    pdf = weights / torch.sum(weights, -1, keepdim=True)
+    cdf = torch.cumsum(pdf, -1)
+    cdf = torch.cat([torch.zeros_like(cdf[...,:1]), cdf], -1)
 
     # Take uniform samples
     if det:
