@@ -6,6 +6,7 @@ import numpy as np
 import imageio
 import json
 from typing import Optional, Tuple
+import torch.nn.functional as F
 
 
 # Misc utils
@@ -13,7 +14,7 @@ from typing import Optional, Tuple
 def img2mse(x, y): return torch.mean(torch.square(x - y))
 
 
-def mse2psnr(x): return -10.*torch.log(x)/torch.log(10.)
+def mse2psnr(x): return -10.*torch.log(x)/torch.log(torch.Tensor([10.]))
 
 
 def to8b(x): return (255*np.clip(x, 0, 1)).astype(np.uint8)
@@ -130,16 +131,22 @@ class NeRF(nn.Module):
   def __init__(
     self,
     d_input: int = 3,
+    d_input_views: int = 0,
     n_layers: int = 8,
     d_filter: int = 256,
-    skip: Tuple[int] = (4,),
-    d_viewdirs: Optional[int] = None
+    skip: list = [4],
+    d_viewdirs: bool = False
   ):
     super().__init__()
     self.d_input = d_input
+    self.d_input_views = d_input_views
     self.skip = skip
     self.act = nn.functional.relu
     self.d_viewdirs = d_viewdirs
+    self.n_layers = n_layers
+    self.d_filter = d_filter
+    self.d_viewdirs = d_viewdirs
+
 
     # Create model layers
     self.layers = nn.ModuleList(
@@ -148,12 +155,13 @@ class NeRF(nn.Module):
        else nn.Linear(d_filter, d_filter) for i in range(n_layers - 1)]
     )
 
+    self.branch = nn.Linear(d_filter + d_input_views, d_filter // 2)
+
     # Bottleneck layers
-    if self.d_viewdirs is not None:
+    if self.d_viewdirs:
       # If using viewdirs, split alpha and RGB
       self.alpha_out = nn.Linear(d_filter, 1)
       self.rgb_filters = nn.Linear(d_filter, d_filter)
-      self.branch = nn.Linear(d_filter + self.d_viewdirs, d_filter // 2)
       self.output = nn.Linear(d_filter // 2, 3)
     else:
       # If no viewdirs, use simpler output
@@ -161,70 +169,73 @@ class NeRF(nn.Module):
   
   def forward(
     self,
-    x: torch.Tensor,
-    viewdirs: Optional[torch.Tensor] = None
-  ) -> torch.Tensor:
+    x: torch.Tensor
+    ) -> torch.Tensor:
     r"""
     Forward pass with optional view direction.
     """
-
-    # Cannot use viewdirs if instantiated with d_viewdirs = None
-    if self.d_viewdirs is None and viewdirs is not None:
-      raise ValueError('Cannot input x_direction if d_viewdirs was not given.')
-
     # Apply forward pass up to bottleneck
-    x_input = x
+    x_input, x_views = torch.split(x, [self.d_input, self.d_input_views], dim = -1)
+    x = x_input
+
     for i, layer in enumerate(self.layers):
-      x = self.act(layer(x))
+      x = self.layers[i](x)
+      x = F.relu(x)
+
       if i in self.skip:
-        x = torch.cat([x, x_input], dim=-1)
+        x = torch.cat([x_input, x], dim=-1)
 
     # Apply bottleneck
-    if self.d_viewdirs is not None:
+    if self.d_viewdirs:
       # Split alpha from network output
       alpha = self.alpha_out(x)
+      feature = self.rgb_filters(x)
+      x = torch.cat([feature, x_views], dim=-1)
 
-      # Pass through bottleneck to get RGB
-      x = self.rgb_filters(x)
-      x = torch.concat([x, viewdirs], dim=-1)
-      x = self.act(self.branch(x))
-      x = self.output(x)
+      x = self.branch(x)
+      x = F.relu(x)
+      rgb = self.output(x)
 
       # Concatenate alphas to output
-      x = torch.concat([x, alpha], dim=-1)
+      res = torch.cat([rgb, alpha], dim=-1)
     else:
       # Simple output
-      x = self.output(x)
-    return x
+      res = self.output(x)
+
+    return res
 
 
-# Ray helpers
+   # Ray helpers
 
 def get_rays(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
-    i, j = torch.meshgrid(torch.range(0, W, dtype=torch.float32),
-                       torch.range(0, H, dtype=torch.float32), indexing='xy')
-    dirs = torch.stack([(i-W*.5)/focal, -(j-H*.5)/focal, -torch.ones_like(i)], -1)
-    rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], -1)
-    rays_o = torch.broadcast_to(c2w[:3, -1], rays_d.shape)
+    #focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+
+    i, j = torch.meshgrid(torch.linspace(0, W-1, W),
+                       torch.linspace(0, H-1, H))
+    i = i.t()
+    j = j.t()
+    dirs = torch.stack([(i-focal[0][2])/focal[0][0], -(j-focal[1][2])/focal[1][1], -torch.ones_like(i)], dim = -1)
+    rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], dim = -1)
+    rays_o = c2w[:3, -1].expand(rays_d.shape)
     return rays_o, rays_d
 
 
 def get_rays_np(H, W, focal, c2w):
     """Get ray origins, directions from a pinhole camera."""
+    #focal = np.array([[focal, 0, W * 0.5], [0, focal, H * 0.5], [0, 0, 1]])
+
     i, j = np.meshgrid(np.arange(W, dtype=np.float32),
                        np.arange(H, dtype=np.float32), indexing='xy')
-    dirs = np.stack([(i-W*.5)/focal, -(j-H*.5)/focal, -np.ones_like(i)], -1)
-    rays_d = np.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], -1)
+    dirs = np.stack([(i-focal[0][2])/focal[0][0], -(j-focal[1][2])/focal[1][1], -np.ones_like(i)], dim = -1)
+    rays_d = np.sum(dirs[..., np.newaxis, :] * c2w[:3, :3], dim = -1)
     rays_o = np.broadcast_to(c2w[:3, -1], np.shape(rays_d))
     return rays_o, rays_d
 
 
 def ndc_rays(H, W, focal, near, rays_o, rays_d):
     """Normalized device coordinate rays.
-
     Space such that the canvas is a cube with sides [-1, 1] in each axis.
-
     Args:
       H: int. Height in pixels.
       W: int. Width in pixels.
@@ -232,7 +243,6 @@ def ndc_rays(H, W, focal, near, rays_o, rays_d):
       near: float or array of shape[batch_size]. Near depth bound for the scene.
       rays_o: array of shape [batch_size, 3]. Camera origin.
       rays_d: array of shape [batch_size, 3]. Ray direction.
-
     Returns:
       rays_o: array of shape [batch_size, 3]. Camera origin in NDC.
       rays_d: array of shape [batch_size, 3]. Ray direction in NDC.
@@ -252,21 +262,20 @@ def ndc_rays(H, W, focal, near, rays_o, rays_d):
         (rays_d[..., 1]/rays_d[..., 2] - rays_o[..., 1]/rays_o[..., 2])
     d2 = -2. * near / rays_o[..., 2]
 
-    rays_o = torch.stack([o0, o1, o2], -1)
-    rays_d = torch.stack([d0, d1, d2], -1)
+    rays_o = torch.stack([o0, o1, o2], dim = -1)
+    rays_d = torch.stack([d0, d1, d2], dim = -1)
 
     return rays_o, rays_d
 
-
 # Hierarchical sampling helper
 
-def sample_pdf(bins, weights, N_samples, det=False):
+def sample_pdf(bins, weights, N_samples, det=False, test=False):
 
     # Get pdf
-    weights += 1e-5  # prevent nans
-    pdf = weights / torch.sum(weights, -1, keepdims=True)
+    weights = weights + 1e-5 
+    pdf = weights / torch.sum(weights, -1, keepdim=True)
     cdf = torch.cumsum(pdf, -1)
-    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
+    cdf = torch.cat([torch.zeros_like(cdf[...,:1]), cdf], -1)
 
     # Take uniform samples
     if det:
@@ -275,13 +284,28 @@ def sample_pdf(bins, weights, N_samples, det=False):
     else:
         u = torch.rand(list(cdf.shape[:-1]) + [N_samples])
 
+    if test:
+      np.random.seed(0)
+      new_s = list(cdf.shape[:-1]) + [N_samples]
+
+      if det:
+        u = np.linspace(0., 1., N_samples)
+        u = np.broadcast_to(u, new_s)
+      else:
+        u = np.random.rand(*new_s)
+
+      u = torch.Tensor(u)
+
+    u = u.contiguous()
+
     # Invert CDF
-    inds = torch.searchsorted(cdf, u, side='right')
-    below = torch.maximum(0, inds-1)
-    above = torch.minimum(cdf.shape[-1]-1, inds)
-    inds_g = torch.stack([below, above], -1)
-    cdf_g = torch.gather(cdf, inds_g, axis=-1, batch_dims=len(inds_g.shape)-2)
-    bins_g = torch.gather(bins, inds_g, axis=-1, batch_dims=len(inds_g.shape)-2)
+    inds = torch.searchsorted(cdf, u, right=True)
+    below = torch.max(torch.zeros_like(inds-1), inds-1)
+    above = torch.min((cdf.shape[-1]-1) * torch.ones_like(inds), inds)
+    inds_g = torch.stack([below, above], dim = -1)
+    matched_shape = [inds_g.shape[0], inds_g.shape[1], cdf.shape[-1]]
+    cdf_g = torch.gather(torch.broadcast_to(cdf.unsqueeze(1), matched_shape), dim = 2, index = inds_g)
+    bins_g = torch.gather(torch.broadcast_to(bins.unsqueeze(1), matched_shape), dim = 2, index = inds_g)
 
     denom = (cdf_g[..., 1]-cdf_g[..., 0])
     denom = torch.where(denom < 1e-5, torch.ones_like(denom), denom)
