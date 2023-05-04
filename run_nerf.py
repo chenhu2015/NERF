@@ -21,7 +21,7 @@ if torch.cuda.is_available():
   device = torch.device("cuda")
 
 np.random.seed(0)
-DEBUG = False
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 
 def batchify(fn, chunk):
@@ -596,11 +596,11 @@ def config_parser():
                         help='frequency of console printout and metric loggin')
     parser.add_argument("--i_img",     type=int, default=500,
                         help='frequency of tensorboard image logging')
-    parser.add_argument("--i_weights", type=int, default=500,
+    parser.add_argument("--i_weights", type=int, default=10000,
                         help='frequency of weight ckpt saving')
-    parser.add_argument("--i_testset", type=int, default=500,
+    parser.add_argument("--i_testset", type=int, default=50000,
                         help='frequency of testset saving')
-    parser.add_argument("--i_video",   type=int, default=500,
+    parser.add_argument("--i_video",   type=int, default=50000,
                         help='frequency of render_poses video saving')
 
     return parser
@@ -679,7 +679,7 @@ def train():
 
     # Cast intrinsics to right types
     H, W, focal = hwf 
-    eye_mat = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]])
+    eye_mat = np.array([[focal, 0, int(W) * 0.5], [0, focal, int(H) * 0.5], [0, 0, 1]]) # Transformation matrix from camera space to NDC space
     H = int(H)
     W = int(W)
     hwf = [H, W, focal]
@@ -768,7 +768,7 @@ def train():
         print('done')
         i_batch = 0
 
-    N_iters = 100000
+    N_iters = 200000
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -907,5 +907,4 @@ def train():
     global_step += 1
 
 if __name__=='__main__':
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
     train()
